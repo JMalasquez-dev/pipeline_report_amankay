@@ -44,14 +44,52 @@ print("Destino:", NOMBRE)
 # COMMAND ----------
 
 import io
+import re
+import getpass
 import boto3
 import pandas as pd
 
+
+def pedir(texto):
+    """Pide un dato con un cuadro de entrada (oculto si el entorno lo permite)."""
+    try:
+        return getpass.getpass(texto)
+    except Exception:
+        return input(texto)
+
+
+def credenciales_aws():
+    # 1) Si existe el secret scope 'awsacademy', se usa automáticamente
+    try:
+        return (dbutils.secrets.get("awsacademy", "access_key"),
+                dbutils.secrets.get("awsacademy", "secret_key"),
+                dbutils.secrets.get("awsacademy", "session_token"))
+    except Exception:
+        pass
+    # 2) Si no, se piden en pantalla
+    print("Pega las credenciales de AWS Academy (AWS Details → AWS CLI).")
+    texto = pedir("Pega aquí las 3 líneas 'export ...' (o solo el access key id y pulsa Enter): ")
+    ak = re.search(r"AWS_ACCESS_KEY_ID=(\S+)", texto)
+    sk = re.search(r"AWS_SECRET_ACCESS_KEY=(\S+)", texto)
+    st = re.search(r"AWS_SESSION_TOKEN=(\S+)", texto)
+    if ak and sk and st:
+        return ak.group(1), sk.group(1), st.group(1)
+    # Si no pegó el bloque completo, se piden una por una
+    ak = texto.strip()
+    sk = pedir("AWS secret access key: ").strip()
+    st = pedir("AWS session token: ").strip()
+    return ak, sk, st
+
+
+ACCESS_KEY, SECRET_KEY, SESSION_TOKEN = credenciales_aws()
+if not (ACCESS_KEY and SECRET_KEY and SESSION_TOKEN):
+    raise ValueError("Faltan credenciales. Ejecuta la celda otra vez y pégalas completas.")
+
 s3 = boto3.client(
     "s3",
-    aws_access_key_id=dbutils.secrets.get("awsacademy", "access_key"),
-    aws_secret_access_key=dbutils.secrets.get("awsacademy", "secret_key"),
-    aws_session_token=dbutils.secrets.get("awsacademy", "session_token"),
+    aws_access_key_id=ACCESS_KEY,
+    aws_secret_access_key=SECRET_KEY,
+    aws_session_token=SESSION_TOKEN,
     region_name=REGION,
 )
 
