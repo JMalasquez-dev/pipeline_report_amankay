@@ -1,7 +1,7 @@
 -- Q5 RANKING + PARTICIPACIÓN: 10 medios con más notas y su porcentaje acumulado
 WITH medios AS (
   SELECT medio, COUNT(*) AS notas
-  FROM silver_noticias
+  FROM workspace.amankay.gold_noticias
   GROUP BY medio
 )
 SELECT medio,

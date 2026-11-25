@@ -2,6 +2,6 @@
 SELECT month(fecha) AS mes,
        tema,
        COUNT(*) AS notas
-FROM silver_noticias
+FROM workspace.amankay.gold_noticias
 GROUP BY month(fecha), tema
 ORDER BY mes, notas DESC;
