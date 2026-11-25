@@ -1,8 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 01 · Importar el reporte Gold de S3 a Unity Catalog
-# MAGIC Selecciona `sts` para usar Databricks Secrets o `volumen` para leer el mismo
-# MAGIC origen mediante un volumen externo de Unity Catalog. Cada ejecución reemplaza
+# MAGIC Selecciona `sts` para ingresar credenciales temporales o `volumen` para leer el mismo
+# MAGIC archivo mediante un volumen externo o administrado de Unity Catalog. Cada ejecución reemplaza
 # MAGIC la instantánea de la tabla de destino después de validar el archivo.
 
 # COMMAND ----------
@@ -16,7 +16,9 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 import re
+import warnings
 from contextlib import closing
+from getpass import GetPassWarning, getpass
 from io import BytesIO
 from pathlib import PurePosixPath
 
@@ -27,6 +29,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType
 
 dbutils.widgets.dropdown("modo", "sts", ["sts", "volumen"], "Modo de acceso a S3")
+dbutils.widgets.dropdown("entrada_sts", "manual", ["manual", "secrets"], "Credenciales STS")
 for nombre, valor in {
     "BUCKET_DEFECTO": "",
     "REGION": "",
@@ -40,6 +43,8 @@ for nombre, valor in {
     "encoding_csv": "utf-8-sig",
 }.items():
     dbutils.widgets.text(nombre, valor, nombre)
+
+# COMMAND ----------
 
 modo = dbutils.widgets.get("modo")
 clave = dbutils.widgets.get("clave_s3").strip()
@@ -57,20 +62,42 @@ if formato not in (".csv", ".xlsx"):
 
 # COMMAND ----------
 
+def leer_credenciales_sts():
+    nombres = ("ACCESS_KEY", "SECRET_KEY", "SESSION_TOKEN")
+    if dbutils.widgets.get("entrada_sts") == "secrets":
+        scope = dbutils.widgets.get("secret_scope").strip()
+        return tuple(dbutils.secrets.get(scope=scope, key=nombre).strip() for nombre in nombres)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GetPassWarning)
+            return tuple(getpass(f"{nombre}: ").strip() for nombre in nombres)
+    except Exception as error:
+        raise RuntimeError(
+            "La entrada enmascarada no está disponible en esta ejecución. "
+            "Selecciona entrada_sts=secrets y configura secret_scope."
+        ) from error
+
+
 if modo == "sts":
     bucket = dbutils.widgets.get("BUCKET_DEFECTO").strip()
     region = dbutils.widgets.get("REGION").strip()
-    scope = dbutils.widgets.get("secret_scope").strip()
-    if not bucket or not region or not scope:
-        raise ValueError("Completa BUCKET_DEFECTO, REGION y secret_scope.")
+    if not bucket or not region:
+        raise ValueError("Completa BUCKET_DEFECTO y REGION.")
 
-    with closing(boto3.client(
-        "s3",
-        region_name=region,
-        aws_access_key_id=dbutils.secrets.get(scope=scope, key="ACCESS_KEY"),
-        aws_secret_access_key=dbutils.secrets.get(scope=scope, key="SECRET_KEY"),
-        aws_session_token=dbutils.secrets.get(scope=scope, key="SESSION_TOKEN"),
-    )) as s3:
+    def crear_cliente_s3():
+        acceso, secreto, token = leer_credenciales_sts()
+        if not all((acceso, secreto, token)):
+            raise ValueError("Completa ACCESS_KEY, SECRET_KEY y SESSION_TOKEN.")
+        return boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=acceso,
+            aws_secret_access_key=secreto,
+            aws_session_token=token,
+        )
+
+    with closing(crear_cliente_s3()) as s3:
         try:
             objeto = s3.get_object(Bucket=bucket, Key=clave)
             with closing(objeto["Body"]) as cuerpo:
@@ -88,7 +115,7 @@ if modo == "sts":
 else:
     volumen = dbutils.widgets.get("volumen_externo").strip().rstrip("/")
     if not re.fullmatch(r"/Volumes/[^/]+/[^/]+/[^/]+", volumen):
-        raise ValueError("Indica el volumen externo como /Volumes/<catalog>/<schema>/<volumen>.")
+        raise ValueError("Indica el volumen como /Volumes/<catalog>/<schema>/<volumen>.")
     origen = contenido = f"{volumen}/{clave}"
 
 if formato == ".csv":

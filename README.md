@@ -4,7 +4,9 @@ El notebook importa un CSV o XLSX de noticias ya procesado en S3 Gold a una tabl
 
 ## 1. Configura el acceso a S3
 
-**Con tus cinco parámetros, usa el modo `sts`.** Importa el repositorio como Git folder o importa los notebooks en Databricks. Desde una terminal con la CLI de Databricks autenticada en tu workspace, ejecuta estos comandos. Escribe cada valor en el prompt interactivo.
+**Para ingresar tus cinco parámetros, usa `modo=sts` y `entrada_sts=manual`.** Importa el repositorio como Git folder o importa los notebooks en Databricks. Ejecuta la celda que crea los widgets y completa `BUCKET_DEFECTO`, `REGION` y `clave_s3`. Al ejecutar la celda de lectura de S3, ingresa `ACCESS_KEY`, `SECRET_KEY` y `SESSION_TOKEN` de la misma sesión cuando se soliciten. La entrada requiere que tu sesión interactiva admita prompts enmascarados.
+
+Si la sesión no admite esos prompts o quieres ejecutar como job, usa `entrada_sts=secrets`. Desde una terminal con la CLI de Databricks autenticada en tu workspace, ejecuta estos comandos y escribe cada valor en el prompt interactivo.
 
 ```text
 databricks secrets create-scope amankay-s3
@@ -21,9 +23,10 @@ En el notebook [01](notebooks/01_crear_tabla_desde_s3.py), usa estos widgets.
 | `BUCKET_DEFECTO` | Nombre del bucket, sin `s3://` |
 | `REGION` | Región real del bucket, por ejemplo `us-east-1` |
 | `clave_s3` | Clave exacta desde la raíz del bucket, por ejemplo `gold/report/reporte_noticias.xlsx` |
-| `secret_scope` | `amankay-s3` si usaste los comandos anteriores |
+| `entrada_sts` | `manual` para ingresar las credenciales al ejecutar o `secrets` para leerlas del scope |
+| `secret_scope` | `amankay-s3` si seleccionaste `secrets` y usaste los comandos anteriores |
 
-La identidad temporal debe tener `s3:GetObject` sobre el objeto y `kms:Decrypt` si el archivo usa una clave KMS que lo requiere. El cómputo del notebook necesita acceso de red a S3 y la identidad que lo ejecuta necesita permiso `READ` sobre el scope. Cuando caduque la sesión AWS, actualiza los tres secretos juntos antes de volver a ejecutar. [Secret scopes y permisos en Databricks](https://docs.databricks.com/aws/en/security/secrets/workspace-secret-scopes)
+La identidad temporal debe tener `s3:GetObject` sobre el objeto y `kms:Decrypt` si el archivo usa una clave KMS que lo requiere. El cómputo del notebook necesita acceso de red a S3 y la identidad que lo ejecuta necesita permiso `READ` sobre el scope. Cuando caduque la sesión AWS, ingresa los tres valores de la nueva sesión o actualiza los tres secretos antes de volver a ejecutar. [Secret scopes y permisos en Databricks](https://docs.databricks.com/aws/en/security/secrets/workspace-secret-scopes)
 
 ### Pantalla «Create a new credential» de tu captura
 
@@ -40,6 +43,23 @@ El campo **IAM role (ARN)** requiere un rol IAM de AWS con acceso al prefijo Gol
 
    Para crearlo necesitas `USE CATALOG`, `USE SCHEMA`, `CREATE VOLUME` sobre el esquema y `CREATE EXTERNAL VOLUME` en la ubicación externa. Quien ejecute el notebook necesita `READ VOLUME` y los permisos de uso del catálogo y esquema. [Creación de volúmenes en Unity Catalog](https://docs.databricks.com/aws/en/volumes/utility-commands)
 4. En el notebook 01 configura `modo=volumen`, `volumen_externo=/Volumes/workspace/amankay/s3_gold` y `clave_s3=reporte_noticias.xlsx` si el archivo está en la raíz del volumen. Usa la ruta relativa al volumen si está en una subcarpeta.
+
+### AWS Academy sin permiso para crear roles IAM
+
+Si AWS devuelve `iam:CreateRole` denegado, la credencial de almacenamiento requiere un rol configurado por un administrador. Mientras esperas ese acceso, puedes probar la tabla Gold y Genie en Databricks Free Edition con un volumen administrado. Free Edition restringe las conexiones salientes, por lo que el modo `sts` depende de que el cómputo pueda alcanzar el endpoint de S3. [Restricciones de Free Edition](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations)
+
+1. Descarga el CSV o XLSX Gold desde la consola de Amazon S3 mientras el laboratorio esté activo.
+2. Ejecuta este SQL en Databricks y carga el archivo con **New → Add or upload data → Upload files to a volume**. Si ya tienes un volumen administrado, úsalo directamente.
+
+   ```sql
+   CREATE SCHEMA IF NOT EXISTS workspace.amankay;
+   CREATE VOLUME IF NOT EXISTS workspace.amankay.gold_archivos;
+   ```
+
+3. En el notebook 01, ejecuta la celda que crea los widgets. Selecciona `modo=volumen`, indica `volumen_externo=/Volumes/workspace/amankay/gold_archivos` y configura `clave_s3` con el nombre del archivo tal como aparece en el volumen, incluida su extensión. Luego ejecuta las celdas restantes.
+4. Presenta este flujo como descarga desde S3 y carga manual a Unity Catalog. La conexión directa gobernada de S3 queda pendiente hasta disponer del rol IAM.
+
+Si ves el error de `clave_s3`, verifica que el valor esté presente y sea relativo. En modo `sts` se mide desde la raíz del bucket, por ejemplo `gold/report/reporte.xlsx`. En modo `volumen` se mide desde la raíz del volumen, por ejemplo `reporte.xlsx`. En ambos casos se omiten `s3://` y la barra inicial.
 
 ## 2. Publica y verifica Catalog → Schema → Table
 
